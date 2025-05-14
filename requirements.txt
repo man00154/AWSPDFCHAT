@@ -4,3 +4,4 @@ boto3
 sqlalchemy
 pydantic
 PyPDF2
+langchain
