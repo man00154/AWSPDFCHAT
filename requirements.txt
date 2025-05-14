@@ -1,9 +1,6 @@
 fastapi
 uvicorn
-PyPDF2
-openai
 boto3
 sqlalchemy
-sqlite3
-aiofiles
-requests
+pydantic
+PyPDF2
