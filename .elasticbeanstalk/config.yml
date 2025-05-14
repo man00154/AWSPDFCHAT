@@ -1,0 +1,6 @@
+branch-defaults:
+  default:
+    environment: aws-pdf-chat-env
+global:
+  application_name: aws-pdf-chat
+  default_region: us-west-2
