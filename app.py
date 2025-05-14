@@ -1,75 +1,88 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from app.utils import process_pdf, upload_to_s3, generate_chat_response
-from app.models import create_db_and_tables, PDFContent
+"""
+AWS PDF Chat Application by Manish Singh
+This script allows users to upload PDFs, process them, and use chat-based interaction to query the content of the PDF using AWS services.
+"""
+import boto3
+import PyPDF2
+from langchain.chains import ConversationalRetrievalChain
+from langchain.document_loaders import PyPDFLoader
+from langchain.embeddings import OpenAIEmbeddings
+from langchain.vectorstores import FAISS
+from langchain.llms import OpenAI
 
-app = FastAPI(title="AWS PDF Chat by Manish Singh")
+# AWS and OpenAI Configuration
+AWS_REGION = "us-east-1"
+S3_BUCKET_NAME = "aws-pdf-chat-app-manish-singh"
+OPENAI_API_KEY = "your_openai_api_key"
 
-@app.on_event("startup")
-async def startup_event():
+def upload_pdf_to_s3(file_path, bucket_name, file_key):
     """
-    Initialize the database tables during startup.
+    Upload a PDF file to an AWS S3 bucket.
     """
-    create_db_and_tables()
+    s3_client = boto3.client('s3', region_name=AWS_REGION)
+    s3_client.upload_file(file_path, bucket_name, file_key)
+    print(f"Uploaded {file_path} to S3 bucket {bucket_name} as {file_key}.")
 
-@app.post("/upload/")
-async def upload_pdf(file: UploadFile = File(...)):
+def download_pdf_from_s3(bucket_name, file_key, download_path):
     """
-    Upload a PDF file, process it, and store its contents.
-
-    Parameters:
-    - file (UploadFile): The PDF file to be uploaded.
-
-    Returns:
-    - dict: Message indicating success.
+    Download a PDF file from an AWS S3 bucket.
     """
-    if not file.filename.endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+    s3_client = boto3.client('s3', region_name=AWS_REGION)
+    s3_client.download_file(bucket_name, file_key, download_path)
+    print(f"Downloaded {file_key} from S3 bucket {bucket_name} to {download_path}.")
+
+def extract_text_from_pdf(file_path):
+    """
+    Extract text from a PDF file using PyPDF2.
+    """
+    with open(file_path, 'rb') as pdf_file:
+        reader = PyPDF2.PdfReader(pdf_file)
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text()
+    return text
+
+def initialize_chat_system(text_data):
+    """
+    Initialize a conversational chat system with the PDF text data.
+    """
+    # Load the PDF text into a retriever
+    loader = PyPDFLoader(text_data)
+    documents = loader.load()
+    embeddings = OpenAIEmbeddings(api_key=OPENAI_API_KEY)
+    vector_store = FAISS.from_documents(documents, embeddings)
     
-    try:
-        # Process the PDF file to extract text
-        text = process_pdf(file.file)
-        
-        # Reset file pointer for re-uploading
-        file.file.seek(0)
-        
-        # Upload the file to AWS S3
-        upload_to_s3(file.file, file.filename)
+    # Create a chat chain
+    retriever = vector_store.as_retriever()
+    llm = OpenAI(api_key=OPENAI_API_KEY)
+    chain = ConversationalRetrievalChain(retriever=retriever, llm=llm)
+    return chain
 
-        # Save extracted text to the database
-        pdf_content = PDFContent(filename=file.filename, content=text)
-        pdf_content.save()
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
-
-    return {"message": "PDF uploaded and processed successfully by AWS PDF Chat by Manish Singh"}
-
-@app.post("/chat/")
-async def chat_with_pdf(query: str, file_id: int):
+def chat_with_pdf(chain, user_query):
     """
-    Chat with the contents of an uploaded PDF file.
-
-    Parameters:
-    - query (str): The user's question/query.
-    - file_id (int): The ID of the uploaded PDF file.
-
-    Returns:
-    - dict: Chat response generated from the PDF content.
+    Handle chat interactions with the PDF using the initialized chain.
     """
-    try:
-        pdf_content = PDFContent.get(file_id)
-        if not pdf_content:
-            raise HTTPException(status_code=404, detail="PDF not found")
-        
-        # Generate a response using the GPT model
-        response = generate_chat_response(query, pdf_content.content)
+    response = chain.run(user_query)
+    return response
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
-    
-    return {"response": f"Chat response (AWS PDF Chat by Manish Singh): {response}"}
-
+# Example Usage
 if __name__ == "__main__":
-    # Use uvicorn to run the application on port 8080
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    # Step 1: Upload PDF to S3
+    file_path = "example.pdf"
+    file_key = "uploaded_files/example.pdf"
+    upload_pdf_to_s3(file_path, S3_BUCKET_NAME, file_key)
+
+    # Step 2: Download PDF from S3
+    download_path = "downloaded_example.pdf"
+    download_pdf_from_s3(S3_BUCKET_NAME, file_key, download_path)
+
+    # Step 3: Extract text from PDF
+    pdf_text = extract_text_from_pdf(download_path)
+
+    # Step 4: Initialize Chat System
+    chat_chain = initialize_chat_system(pdf_text)
+
+    # Step 5: Chat with PDF
+    user_query = "What is the main topic of the PDF?"
+    response = chat_with_pdf(chat_chain, user_query)
+    print("Chat Response:", response)
