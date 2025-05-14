@@ -25,15 +25,22 @@ async def upload_pdf(file: UploadFile = File(...)):
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
     
-    # Process the PDF file to extract text
-    text = process_pdf(file.file)
-    
-    # Upload the file to AWS S3
-    upload_to_s3(file.file, file.filename)  
+    try:
+        # Process the PDF file to extract text
+        text = process_pdf(file.file)
+        
+        # Reset file pointer for re-uploading
+        file.file.seek(0)
+        
+        # Upload the file to AWS S3
+        upload_to_s3(file.file, file.filename)
 
-    # Save extracted text to the database
-    pdf_content = PDFContent(filename=file.filename, content=text)
-    pdf_content.save()
+        # Save extracted text to the database
+        pdf_content = PDFContent(filename=file.filename, content=text)
+        pdf_content.save()
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
     return {"message": "PDF uploaded and processed successfully by AWS PDF Chat by Manish Singh"}
 
@@ -49,11 +56,20 @@ async def chat_with_pdf(query: str, file_id: int):
     Returns:
     - dict: Chat response generated from the PDF content.
     """
-    pdf_content = PDFContent.get(file_id)
-    if not pdf_content:
-        raise HTTPException(status_code=404, detail="PDF not found")
-    
-    # Generate a response using the GPT model
-    response = generate_chat_response(query, pdf_content.content)
+    try:
+        pdf_content = PDFContent.get(file_id)
+        if not pdf_content:
+            raise HTTPException(status_code=404, detail="PDF not found")
+        
+        # Generate a response using the GPT model
+        response = generate_chat_response(query, pdf_content.content)
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
     
     return {"response": f"Chat response (AWS PDF Chat by Manish Singh): {response}"}
+
+if __name__ == "__main__":
+    # Use uvicorn to run the application on port 8080
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8080)
